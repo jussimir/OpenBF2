@@ -23,6 +23,7 @@
 #include "../../../RendDX9Abi/D3dx9Sdk.h"
 #if defined(BF2_STATIC_PLUGINS) && BF2_STATIC_PLUGINS
 #include "../../../SwiffPlayerAbi/HiDpiGlyphs.h"   // [CHOSEN, not recovered] HiDPI menu text
+#include "HiDpiFontTexture.h"
 #include <algorithm>
 #include <ctype.h>
 #endif
@@ -143,13 +144,6 @@ static double roundFontPosition(float value)
 
 // Parsed font metrics, atlas and projection. Device-reset callbacks do not refresh the projection;
 // FontSystem reloads fonts when display resolution changes.
-
-#if defined(BF2_STATIC_PLUGINS) && BF2_STATIC_PLUGINS
-// [CHOSEN, not recovered] HiDPI menu text.
-int  hidpiBuildFontTexture(const std::string& base, const char* exportName, int N, void** outTexture);
-void hidpiAddPending(void* owner, void (*retry)(void*));
-void hidpiRemovePending(void* owner);
-#endif
 
 class DifFont : public dx9rend::DeviceLostResetListener
 {
