@@ -46,6 +46,7 @@ static short capsLockKeyState()
 
 #include "../../../../RendDX9Abi/BfMemory.h"
 #include "../../../../RendDX9Abi/HfeAbi.h"
+#include "../../../../SwiffPlayerAbi/HiDpiGlyphs.h"
 #if !defined(_MSC_VER)
 // [CHOSEN, not recovered] Use the renderer's shared native slots and signatures.
 #include "../../../../SwiffPlayerAbi/NativeRenderCalls.h"
@@ -10305,6 +10306,22 @@ inline unsigned char pmHasPendingTransition(void* pm, void* stdStringOut) { retu
 inline void pmClear(void* pm) { reinterpret_cast<void(__thiscall*)(void*)>(rcVtbl(pm)[72/4])(pm); }   // +0x48
 #endif
 
+// [CHOSEN, not recovered] Output-to-movie pixel ratio for gameswf's draw quality (see update):
+// the larger axis ratio, as movie_root::set_display_viewport takes the larger of its two scales.
+// At the movie's native pixel size, keep its original drawing precision.
+static float swiffDisplayQualityScale(void* host, int movieW, int movieH)
+{
+    if (!host || movieW <= 0 || movieH <= 0)
+        return 1.0f;
+    unsigned vpW = 0, vpH = 0;
+    hostGetViewportSize(host, &vpW, &vpH);
+    const float sx = static_cast<float>(vpW) / static_cast<float>(movieW);
+    const float sy = static_cast<float>(vpH) / static_cast<float>(movieH);
+    float s = sx > sy ? sx : sy;
+    s = s > 1.0f ? (s < 16.0f ? s : 16.0f) : 1.0f;
+    return s;
+}
+
 // Reinterpret a float's bits as a dword (updateTime/line_style_width pass floats through dword slots).
 inline unsigned floatBits(float f) { unsigned d; ::memcpy(&d, &f, 4); return d; }
 
@@ -10684,6 +10701,10 @@ bool SwiffPlayer::loadMovie(const char* movieName)
         ::renddx9abi::logf("[SwiffPlayer] offline Connect to IP policy: main-menu instance registered");
     }
 
+    // [CHOSEN, not recovered] HiDPI menu text: this movie's outline fonts are registered;
+    // let the renderer rebuild the .dif atlases that were waiting for them.
+    if (openbf2HiDpiMenuEnabled())
+        openbf2HiDpiNotifyMovieLoaded();
     ::renddx9abi::logf("[SwiffPlayer::loadMovie] returning true");
     SWF_LIST_TRACE("loadMovie '%s'", movieName ? movieName : "");   // [TEMP] c-swf-disconnect
     return true;
@@ -10758,7 +10779,15 @@ void SwiffPlayer::update(float deltaTime)
     }
 
     gameswf::movie_interface* mi = static_cast<gameswf::movie_interface*>(movie_instance);
+    // [CHOSEN, not recovered] HiDPI menu text: the viewport stays the movie size (layout,
+    // beginDisplay's viewport/remap and the mouse scale are untouched), but the root's pixel
+    // scale follows the host output so SWF font outlines and shapes are flattened for the
+    // real pixels (3840x2160 over a 1024x768 menu: scale 3.75).
+    if (openbf2HiDpiMenuEnabled())
+        gameswf::set_display_quality_scale(swiffDisplayQualityScale(swiff_host, movie_width, movie_height));
     mi->set_display_viewport(0, 0, movie_width, movie_height);      // typed (2006 4-arg)
+    if (openbf2HiDpiMenuEnabled())
+        gameswf::set_display_quality_scale(1.0f);
     mi->advance(deltaTime);
     // [CHOSEN, not recovered] Observe the authored request after its actions,
     // before display. Neither cached loginStatus nor its native getter changes.
