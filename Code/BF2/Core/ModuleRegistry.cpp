@@ -6,6 +6,9 @@
 #include <sstream>
 #include <cstdlib>
 #include <cstdio>
+#if defined(__APPLE__) && !DEDICATED
+#include <chrono>
+#endif
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
@@ -1036,10 +1039,37 @@ void ModuleGame::handleEvent(EventCategory category, unsigned int id, EventNode*
     if (isDedicated())
         return;
 
+#  if defined(__APPLE__)
+    // [CHOSEN, not recovered] Optionally pace loading-screen presents on macOS
+    // while continuing to service every progress event (kr4uzi/OpenBF2#41).
+    using LoadingClock = std::chrono::steady_clock;
+    static const std::chrono::duration<double> loadingFrameInterval = [] {
+        const char* setting = std::getenv("OPENBF2_LOADING_FPS");
+        if (!setting)
+            return std::chrono::duration<double>::zero();
+        char* end = nullptr;
+        const double fps = std::strtod(setting, &end);
+        if (end == setting || *end != '\0' || !(fps >= 1.0 && fps <= 240.0))
+            return std::chrono::duration<double>::zero();
+        return std::chrono::duration<double>(1.0 / fps);
+    }();
+    static struct
+    {
+        LoadingClock::time_point lastFrame;
+        bool active = false;
+        bool displayedCompletion = false;
+    } loadingScreen;
+#  endif
+
     if (category == ECCore)
     {
         if (id == 15)                                       // CEActivateApp
+        {
             m_appActive = *static_cast<bool*>(data);
+#  if defined(__APPLE__)
+            loadingScreen.lastFrame = {};
+#  endif
+        }
         return;
     }
 
@@ -1048,6 +1078,10 @@ void ModuleGame::handleEvent(EventCategory category, unsigned int id, EventNode*
         switch (id)
         {
         case 3:                                             // ECMenuMenuEvent_InitLoadingScreen
+#  if defined(__APPLE__)
+            loadingScreen = {};
+            loadingScreen.active = true;
+#  endif
             if (menuLogic)
             {
                 menuLogic->release();
@@ -1066,16 +1100,39 @@ void ModuleGame::handleEvent(EventCategory category, unsigned int id, EventNode*
             if (menuLogic && m_appActive)
             {
                 menuLogic->update(1.0);                     // +0x28, the literal 1.0
+#  if defined(__APPLE__)
+                const bool pace = loadingScreen.active && loadingFrameInterval.count() > 0.0;
+                const bool completion = pace && data && *static_cast<const float*>(data) >= 100.0f;
+                LoadingClock::time_point frameTime;
+                if (pace)
+                {
+                    frameTime = LoadingClock::now();
+                    const bool firstCompletion = completion && !loadingScreen.displayedCompletion;
+                    if (!firstCompletion && loadingScreen.lastFrame != LoadingClock::time_point{} &&
+                        frameTime - loadingScreen.lastFrame < loadingFrameInterval)
+                        return;
+                }
+#  endif
                 if (menuLogic->beginFrame())                // +0x2C
                 {
                     menuLogic->display();                   // +0x30
                     menuLogic->endFrame();                  // +0x34
+#  if defined(__APPLE__)
+                    if (pace)
+                    {
+                        loadingScreen.lastFrame = frameTime;
+                        loadingScreen.displayedCompletion |= completion;
+                    }
+#  endif
                 }
             }
             return;
 
         case 5:                                             // ECMenuMenuEvent_RemoveLoadingScreen
         case 10:                                            // ECMenuMenuEvent_DisableBetweenRounds
+#  if defined(__APPLE__)
+            loadingScreen = {};
+#  endif
             if (menuLogic)
             {
                 menuLogic->release();
@@ -1088,6 +1145,9 @@ void ModuleGame::handleEvent(EventCategory category, unsigned int id, EventNode*
             return;
 
         case 9:                                             // ECMenuMenuEvent_EnableBetweenRounds
+#  if defined(__APPLE__)
+            loadingScreen = {};
+#  endif
             if (menuLogic)
             {
                 menuLogic->release();
